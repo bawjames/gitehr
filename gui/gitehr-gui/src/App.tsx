@@ -40,25 +40,58 @@ import {
   getStateFiles,
   getStatus,
   isGitehrRepo,
+  hasMpi,
+  getMpi,
   pickFolder,
   initRepo,
   type JournalEntryInfo,
   type RepoStatusInfo,
   type StateFileInfo,
+  type MpiInfo,
+  type MpiPatientInfo,
 } from "./api/gitehr";
 
 function App() {
   const [repoPath, setRepoPath] = useState<string | null>(null);
+  const [storeRoot, setStoreRoot] = useState<string | null>(null);
   const [repoChecked, setRepoChecked] = useState(false);
   const [status, setStatus] = useState<RepoStatusInfo | null>(null);
   const [entries, setEntries] = useState<JournalEntryInfo[]>([]);
   const [stateFiles, setStateFiles] = useState<StateFileInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mpiLoading, setMpiLoading] = useState(false);
+  const [mpi, setMpi] = useState<MpiInfo | null>(null);
+  const [patientSearch, setPatientSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   const [newEntryContent, setNewEntryContent] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const loadMpi = async (path: string) => {
+    setMpiLoading(true);
+    setError(null);
+    try {
+      const mpiData = await getMpi(path);
+      setMpi(mpiData);
+      setStoreRoot(mpiData.store_root);
+      setRepoPath(null);
+    } catch (err) {
+      console.error("Failed to load MPI:", err);
+      setError("Failed to load MPI data. Please ensure gitehr-mpi.json is valid.");
+    } finally {
+      setMpiLoading(false);
+    }
+  };
+
+  const selectLatestPatientRepo = (mpiData: MpiInfo) => {
+    if (mpiData.patients.length === 0) {
+      setError("MPI contains no patients.");
+      return;
+    }
+    const latest = mpiData.patients[mpiData.patients.length - 1];
+    setRepoPath(latest.repo_path);
+  };
 
   useEffect(() => {
     const checkInitialRepo = async () => {
@@ -67,6 +100,11 @@ function App() {
         const isRepo = await isGitehrRepo(cwd);
         if (isRepo) {
           setRepoPath(cwd);
+          return;
+        }
+        const hasIndex = await hasMpi(cwd);
+        if (hasIndex) {
+          await loadMpi(cwd);
         }
       } catch (err) {
         console.error("Failed to check initial repo:", err);
@@ -85,8 +123,16 @@ function App() {
         if (isRepo) {
           setRepoPath(folder);
           setError(null);
+          return;
+        }
+        const hasIndex = await hasMpi(folder);
+        if (hasIndex) {
+          await loadMpi(folder);
+          setError(null);
         } else {
-          setError("Selected folder is not a GitEHR repository (no .gitehr directory found).");
+          setError(
+            "Selected folder is not a GitEHR repository or store root (no .gitehr or gitehr-mpi.json found)."
+          );
         }
       }
     } catch (err) {
@@ -103,7 +149,10 @@ function App() {
         setError(null);
         try {
           await initRepo(folder);
-          setRepoPath(folder);
+          const mpiData = await getMpi(folder);
+          setMpi(mpiData);
+          setStoreRoot(mpiData.store_root);
+          selectLatestPatientRepo(mpiData);
         } catch (err) {
           console.error("Failed to init repo:", err);
           const message = typeof err === "string" ? err : String(err);
@@ -173,6 +222,19 @@ function App() {
     return file.content.replace(/^#+\s+/gm, "").trim();
   };
 
+  const filteredPatients: MpiPatientInfo[] = mpi
+    ? mpi.patients.filter((patient) => {
+        if (!patientSearch.trim()) return true;
+        const needle = patientSearch.toLowerCase();
+        if (patient.patient_id.toLowerCase().includes(needle)) return true;
+        return patient.identifiers.some(
+          (id) =>
+            id.type.toLowerCase().includes(needle) ||
+            id.value.toLowerCase().includes(needle)
+        );
+      })
+    : [];
+
   // Loading state while checking initial repo
   if (!repoChecked) {
     return (
@@ -185,8 +247,8 @@ function App() {
     );
   }
 
-  // No repo detected - show folder picker
-  if (!repoPath) {
+  // No repo detected and no MPI detected - show folder picker
+  if (!repoPath && !storeRoot) {
     return (
       <Center h="100vh" bg="gray.0">
         <Card radius="lg" shadow="md" p="xl" w={400}>
@@ -197,7 +259,7 @@ function App() {
             <Stack align="center" gap="xs">
               <Title order={3}>No GitEHR Repository Detected</Title>
               <Text size="sm" c="dimmed" ta="center">
-                Select a folder containing a GitEHR repository to get started.
+                Select a GitEHR repository or store root to get started.
               </Text>
             </Stack>
             {error && (
@@ -227,11 +289,131 @@ function App() {
               loading={creating}
               fullWidth
             >
-              Create New Repository
+              Create New Repository (Store Root)
             </Button>
           </Stack>
         </Card>
       </Center>
+    );
+  }
+
+  if (!repoPath && storeRoot) {
+    return (
+      <AppShell
+        className="app-shell"
+        header={{ height: 64, offset: true }}
+        padding="md"
+      >
+        <AppShell.Header className="app-header">
+          <Group h="100%" px="md" justify="space-between">
+            <Group gap="sm">
+              <Box className="brand-mark">
+                <img src={gitehrLogo} alt="GitEHR logo" />
+              </Box>
+              <Box>
+                <Text size="xs" c="dimmed" fw={600} tt="uppercase">
+                  GitEHR Patient Index
+                </Text>
+                <Title order={4} className="brand-title">
+                  Store Root
+                </Title>
+              </Box>
+            </Group>
+            <Group gap="sm">
+              <TextInput
+                placeholder="Search by ID, NHS, MRN..."
+                leftSection={<IconSearch size={16} />}
+                size="sm"
+                className="search-input"
+                value={patientSearch}
+                onChange={(e) => setPatientSearch(e.currentTarget.value)}
+              />
+              <Button
+                variant="light"
+                leftSection={<IconPlus size={18} />}
+                onClick={handleInitRepo}
+                loading={creating}
+              >
+                New Patient
+              </Button>
+            </Group>
+          </Group>
+        </AppShell.Header>
+        <AppShell.Main className="app-main">
+          <Box className="main-surface">
+            <Stack gap="md">
+              {error && (
+                <Alert
+                  icon={<IconAlertCircle size={16} />}
+                  title="Error"
+                  color="red"
+                  withCloseButton
+                  onClose={() => setError(null)}
+                >
+                  {error}
+                </Alert>
+              )}
+              <Group justify="space-between" align="flex-end">
+                <Box>
+                  <Title order={2}>Patient Index</Title>
+                  <Text size="sm" c="dimmed">
+                    Search and select a patient from the MPI.
+                  </Text>
+                </Box>
+                <Badge variant="light" color="teal">
+                  {mpi ? mpi.patients.length : 0} patients
+                </Badge>
+              </Group>
+
+              <Card radius="lg" className="panel-card">
+                {mpiLoading ? (
+                  <Center py="md">
+                    <Loader size="sm" />
+                  </Center>
+                ) : filteredPatients.length === 0 ? (
+                  <Text size="sm" c="dimmed" ta="center" py="md">
+                    No patients found. Create a new patient to get started.
+                  </Text>
+                ) : (
+                  <Stack gap="sm">
+                    {filteredPatients.map((patient) => (
+                      <Card key={patient.patient_id} withBorder padding="md" radius="md">
+                        <Group justify="space-between" align="flex-start">
+                          <Box>
+                            <Text fw={600}>{patient.patient_id}</Text>
+                            <Text size="xs" c="dimmed">
+                              Updated {new Date(patient.updated_at).toLocaleString()}
+                            </Text>
+                            <Group gap="xs" mt="xs">
+                              {patient.identifiers.slice(0, 4).map((id, i) => (
+                                <Badge key={`${id.type}-${id.value}-${i}`} variant="light">
+                                  {id.type}: {id.value}
+                                </Badge>
+                              ))}
+                              {patient.identifiers.length === 0 && (
+                                <Badge variant="light" color="gray">
+                                  No identifiers
+                                </Badge>
+                              )}
+                            </Group>
+                          </Box>
+                          <Button
+                            size="sm"
+                            variant="light"
+                            onClick={() => setRepoPath(patient.repo_path)}
+                          >
+                            Open
+                          </Button>
+                        </Group>
+                      </Card>
+                    ))}
+                  </Stack>
+                )}
+              </Card>
+            </Stack>
+          </Box>
+        </AppShell.Main>
+      </AppShell>
     );
   }
 
@@ -275,6 +457,13 @@ function App() {
           <Text size="xs" tt="uppercase" fw={600} c="dimmed">
             Navigation
           </Text>
+          {storeRoot && (
+            <NavLink
+              label="Patient Index"
+              leftSection={<IconUser size={18} />}
+              onClick={() => setRepoPath(null)}
+            />
+          )}
           <NavLink
             label="Patients"
             leftSection={<IconUser size={18} />}

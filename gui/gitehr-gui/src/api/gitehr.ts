@@ -32,6 +32,27 @@ export interface ContributorInfo {
   active: boolean;
 }
 
+export interface MpiIdentifier {
+  type: string;
+  value: string;
+}
+
+export interface MpiPatientInfo {
+  patient_id: string;
+  repo_path: string;
+  status: string;
+  merged_into: string | null;
+  updated_at: string;
+  identifiers: MpiIdentifier[];
+}
+
+export interface MpiInfo {
+  version: number;
+  updated_at: string;
+  patients: MpiPatientInfo[];
+  store_root: string;
+}
+
 export async function getCurrentDir(): Promise<string> {
   return invoke<string>("get_current_dir");
 }
@@ -40,11 +61,19 @@ export async function isGitehrRepo(path: string): Promise<boolean> {
   return invoke<boolean>("is_gitehr_repo", { path });
 }
 
+export async function hasMpi(path: string): Promise<boolean> {
+  return invoke<boolean>("has_mpi", { path });
+}
+
+export async function getMpi(path: string): Promise<MpiInfo> {
+  return invoke<MpiInfo>("get_mpi", { path });
+}
+
 export async function pickFolder(): Promise<string | null> {
   const result = await open({
     directory: true,
     multiple: false,
-    title: "Select GitEHR Repository",
+    title: "Select GitEHR Repository or Store Root",
   });
   return result as string | null;
 }

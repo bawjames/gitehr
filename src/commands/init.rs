@@ -1,6 +1,6 @@
 use anyhow::Result;
 use fs_extra::dir::{self, CopyOptions};
-use rand::Rng;
+use rand::RngExt;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 

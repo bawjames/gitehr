@@ -73,7 +73,15 @@ venv.bak/
 profile_default/
 ipython_config.py
 
-# mkdocs build output
+# MkDocs build output
 /site
 
+
+### GITEHR
+
+# GitEHR specific files
+.gitehr
+
+
+# Other generated files
 .sisyphus/

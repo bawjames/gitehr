@@ -38,6 +38,32 @@ pub struct ContributorInfo {
     pub active: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MpiIdentifier {
+    #[serde(rename = "type")]
+    pub id_type: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MpiPatientInfo {
+    pub patient_id: String,
+    pub repo_path: String,
+    pub status: String,
+    pub merged_into: Option<String>,
+    pub updated_at: String,
+    pub identifiers: Vec<MpiIdentifier>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MpiInfo {
+    pub version: u32,
+    pub updated_at: String,
+    pub patients: Vec<MpiPatientInfo>,
+    #[serde(default)]
+    pub store_root: String,
+}
+
 fn with_repo_dir<T, F>(repo_path: &str, f: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String>,
@@ -59,6 +85,29 @@ fn get_current_dir() -> Result<String, String> {
 #[tauri::command]
 fn is_gitehr_repo(path: String) -> bool {
     PathBuf::from(&path).join(".gitehr").exists()
+}
+
+#[tauri::command]
+fn has_mpi(path: String) -> bool {
+    PathBuf::from(&path).join("gitehr-mpi.json").exists()
+}
+
+#[tauri::command]
+fn get_mpi(path: String) -> Result<MpiInfo, String> {
+    let mpi_path = PathBuf::from(&path).join("gitehr-mpi.json");
+    if !mpi_path.exists() {
+        return Err("MPI not found in selected store root".to_string());
+    }
+
+    let content = std::fs::read_to_string(&mpi_path).map_err(|e| e.to_string())?;
+    let mut mpi: MpiInfo = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+    for patient in mpi.patients.iter_mut() {
+        let abs = PathBuf::from(&path).join(&patient.repo_path);
+        patient.repo_path = abs.to_string_lossy().to_string();
+    }
+    mpi.store_root = path;
+    Ok(mpi)
 }
 
 #[tauri::command]
@@ -281,6 +330,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_current_dir,
             is_gitehr_repo,
+            has_mpi,
+            get_mpi,
             get_status,
             get_journal_entries,
             get_state_files,
