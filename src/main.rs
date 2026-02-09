@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use std::io;
 use std::path::PathBuf;
 
@@ -59,8 +59,6 @@ enum Commands {
     UpgradeBinary,
     #[command(visible_alias = "v")]
     Version,
-    #[command(hide = true)]
-    V,
     #[command(
         about = "Generate shell completions",
         long_about = r#"Generate shell completions for gitehr.
@@ -348,7 +346,7 @@ fn main() -> Result<()> {
         Commands::UpgradeBinary => {
             commands::upgrade::upgrade_binary()?;
         }
-        Commands::Version | Commands::V => {
+        Commands::Version => {
             // Use the crate version from Cargo.toml
             let gitehr_version = env!("CARGO_PKG_VERSION");
             println!("GitEHR: {}", gitehr_version);
