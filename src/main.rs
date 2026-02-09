@@ -59,8 +59,6 @@ enum Commands {
     UpgradeBinary,
     #[command(visible_alias = "v")]
     Version,
-    // #[command(hide = true)]
-    // V,
     #[command(
         about = "Generate shell completions",
         long_about = r#"Generate shell completions for gitehr.
