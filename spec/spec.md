@@ -38,6 +38,11 @@ When `gitehr init` runs, it copies the template from `gitehr-folder-structure` i
 
 Running `gitehr` with no subcommand prints the version and help on the available subcommands and exits successfully (see [src/main.rs](../../src/main.rs)).
 
+CLI naming and flags:
+- Prefer clear, dashless commands and subcommands (e.g., `gitehr remote add`) to reduce confusion.
+- Use word-form aliases for discoverable shortcuts (e.g., `gitehr v`, `gitehr st`); avoid short-flag aliases except for global modifiers.
+- Reserve flags for condition modifiers and global behavior (e.g., verbosity levels `-v/-vv/-vvv`, or an alternative config path like `-f dsc.toml`), not as substitutes for primary verbs.
+
 The CLI currently provides the following commands.
 
 ### [`gitehr init`](commands/init.md)
