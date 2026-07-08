@@ -28,8 +28,12 @@ fn find_up(marker: &str) -> Result<Option<PathBuf>> {
     }
 }
 
-/// Resolve the Store root for a store-level command.
-pub fn resolve_store_root() -> Result<PathBuf> {
+/// Resolve the Store root for a store-level command. An explicit `--store`
+/// overrides directory detection and the configured default.
+pub fn resolve_store_root(store_override: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = store_override {
+        return validated_store(path);
+    }
     match find_up(STORE_MARKER)? {
         Some(root) => Ok(root),
         None => configured_store_root()?.ok_or_else(|| {
@@ -40,32 +44,64 @@ pub fn resolve_store_root() -> Result<PathBuf> {
     }
 }
 
-/// Resolve the subject repo for a repo-level command: the nearest `.gitehr/`
-/// ancestor, or - at a Store root with exactly one subject - that subject.
-pub fn resolve_repo_root() -> Result<PathBuf> {
-    if let Some(repo) = find_up(REPO_MARKER)? {
-        return Ok(repo);
+/// Resolve the subject repo for a repo-level command.
+///
+/// With neither selector, this is directory-driven: the nearest `.gitehr/`
+/// ancestor, or - at a Store with exactly one subject - that subject. An
+/// explicit `--subject` and/or `--store` instead selects from the Store's MPI,
+/// letting you target one subject in a multi-subject Store from anywhere.
+pub fn resolve_repo_root(subject: Option<&str>, store_override: Option<&Path>) -> Result<PathBuf> {
+    // Without explicit selectors, honour the surrounding directory first.
+    if subject.is_none() && store_override.is_none() {
+        if let Some(repo) = find_up(REPO_MARKER)? {
+            return Ok(repo);
+        }
     }
-    let store = match find_up(STORE_MARKER)? {
-        Some(store) => Some(store),
-        None => configured_store_root()?,
+
+    // Otherwise (or when not inside a repo) we need a Store to select from.
+    let store = match store_override {
+        Some(path) => validated_store(path)?,
+        None => match find_up(STORE_MARKER)? {
+            Some(store) => store,
+            None => configured_store_root()?.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Not a GitEHR repository or Store. Run `gitehr store init` to create one, or set one with `gitehr config set-store <path>`."
+                )
+            })?,
+        },
     };
 
-    if let Some(store) = store {
-        let subjects = subjects(&store)?;
-        return match subjects.as_slice() {
-            [(_, path)] => Ok(path.clone()),
-            [] => bail!("This Store has no subjects yet. Add one with `gitehr store add [name]`."),
-            many => bail!(
-                "You are at a GitEHR Store with {} subjects. cd into one (e.g. `cd {}`), or add a new one with `gitehr store add`.",
-                many.len(),
-                many[0].0
-            ),
-        };
+    let subjects = subjects(&store)?;
+
+    if let Some(selector) = subject {
+        return subjects
+            .iter()
+            .find(|s| s.matches(selector))
+            .map(|s| s.path.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No subject '{selector}' in the Store at {} (matched against subject name and MPI id). List subjects with `gitehr store list`.",
+                    store.display()
+                )
+            });
     }
-    bail!(
-        "Not a GitEHR repository or Store. Run `gitehr store init` to create one, or set one with `gitehr config set-store <path>`."
-    )
+
+    match subjects.as_slice() {
+        [only] => {
+            eprintln!(
+                "Note: no subject supplied and the Store is a singleton; subject '{}' inferred.",
+                only.repo_path
+            );
+            Ok(only.path.clone())
+        }
+        [] => bail!("This Store has no subjects yet. Add one with `gitehr store add [name]`."),
+        many => bail!(
+            "No subject selected. The Store at {} has {} subjects; choose one with `--subject <name|id>` (e.g. `--subject {}`), or cd into the subject's directory.",
+            store.display(),
+            many.len(),
+            many[0].repo_path
+        ),
+    }
 }
 
 fn configured_store_root() -> Result<Option<PathBuf>> {
@@ -84,18 +120,63 @@ fn configured_store_root() -> Result<Option<PathBuf>> {
     }
 }
 
-/// `(name, absolute path)` for each subject in the Store's MPI (parsed loosely so
-/// this module does not depend on the store command's structs).
-fn subjects(store: &Path) -> Result<Vec<(String, PathBuf)>> {
+/// A subject discovered in the Store's MPI.
+struct Subject {
+    /// On-disk directory / friendly name (`repo_path` in the MPI).
+    repo_path: String,
+    /// Canonical MPI id (`patient_id`).
+    patient_id: String,
+    /// Absolute path to the subject repo.
+    path: PathBuf,
+}
+
+impl Subject {
+    /// A `--subject` selector matches either the friendly name or the MPI id,
+    /// mirroring how `gitehr store remove` accepts either.
+    fn matches(&self, selector: &str) -> bool {
+        self.repo_path == selector || self.patient_id == selector
+    }
+}
+
+/// Subjects in the Store's MPI (parsed loosely so this module does not depend on
+/// the store command's structs).
+fn subjects(store: &Path) -> Result<Vec<Subject>> {
     let mpi: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(store.join(STORE_MARKER))?)?;
     let mut out = Vec::new();
     if let Some(arr) = mpi.get("patients").and_then(|v| v.as_array()) {
         for p in arr {
-            if let Some(rp) = p.get("repo_path").and_then(|v| v.as_str()) {
-                out.push((rp.to_string(), store.join(rp)));
-            }
+            let Some(repo_path) = p.get("repo_path").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let patient_id = p
+                .get("patient_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            out.push(Subject {
+                repo_path: repo_path.to_string(),
+                patient_id: patient_id.to_string(),
+                path: store.join(repo_path),
+            });
         }
     }
     Ok(out)
+}
+
+/// Validate and absolutise an explicit `--store` path: it must be an existing
+/// Store root (contain the MPI marker).
+fn validated_store(path: &Path) -> Result<PathBuf> {
+    let store = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    if store.join(STORE_MARKER).exists() {
+        Ok(store)
+    } else {
+        bail!(
+            "--store {} is not a GitEHR Store root ({STORE_MARKER} not found).",
+            store.display()
+        )
+    }
 }

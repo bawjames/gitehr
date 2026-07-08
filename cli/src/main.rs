@@ -28,6 +28,16 @@ use commands::vaccinations::VaccinationCommands;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Target subject (friendly name or MPI id) for repo-level commands. Lets
+    /// you pick a subject in a multi-subject Store without cd-ing into it.
+    #[arg(long, global = true, value_name = "NAME|ID")]
+    subject: Option<String>,
+
+    /// Store root to operate on, overriding directory detection and the
+    /// configured default Store.
+    #[arg(long, global = true, value_name = "PATH")]
+    store: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -118,7 +128,12 @@ Restart your shell after installing completions."#
         command: McpCommands,
     },
     /// List installed plugins (gitehr-<command> executables on PATH)
-    Plugins,
+    Plugins {
+        /// A plugin name is run as `gitehr <name>`, not `gitehr plugins
+        /// <name>`; captured here only to suggest the right form.
+        #[arg(hide = true, trailing_var_arg = true)]
+        args: Vec<String>,
+    },
     #[command(about = "Manage named sync remotes")]
     Remote {
         #[command(subcommand)]
@@ -218,8 +233,11 @@ fn main() -> Result<()> {
         Err(e) => e.exit(),
     };
 
-    // Resolve the Store/repo working context before dispatch (ADR-0005).
-    apply_context(&mut cli.command)?;
+    // Resolve the Store/repo working context before dispatch (ADR-0005). The
+    // global --subject / --store selectors steer that resolution.
+    let subject = cli.subject.clone();
+    let store = cli.store.clone();
+    apply_context(&mut cli.command, subject.as_deref(), store.as_deref())?;
 
     match cli.command {
         Commands::Allergies { command } => commands::allergies::run(command)?,
@@ -240,7 +258,7 @@ fn main() -> Result<()> {
         Commands::Import { mode, path } => commands::import::run(mode, &path)?,
         Commands::Journal { command } => commands::journal::run(command)?,
         Commands::Mcp { command } => commands::mcp::run(command)?,
-        Commands::Plugins => commands::plugin::list(&builtins)?,
+        Commands::Plugins { args } => commands::plugin::run(&builtins, &args)?,
         Commands::Remote { command } => commands::remote::run(command)?,
         Commands::State { command } => commands::state::run(command)?,
         Commands::Status => commands::status::run()?,
@@ -251,7 +269,7 @@ fn main() -> Result<()> {
         Commands::User { command } => commands::user::run(command)?,
         Commands::Vaccinations { command } => commands::vaccinations::run(command)?,
         Commands::Version => commands::version::run(),
-        Commands::External(args) => commands::plugin::run(args)?,
+        Commands::External(args) => commands::plugin::external(args)?,
     }
 
     Ok(())
@@ -330,7 +348,7 @@ fn absolutize_external_paths(command: &mut Commands, base: &Path) {
 /// auto-target); store commands resolve the Store root. Global commands - and
 /// `store init`, which creates a Store - return without ever reading the cwd,
 /// which may be invalid (e.g. a deleted directory inherited from a parent).
-fn apply_context(command: &mut Commands) -> Result<()> {
+fn apply_context(command: &mut Commands, subject: Option<&str>, store: Option<&Path>) -> Result<()> {
     enum Ctx {
         None,
         Store,
@@ -357,14 +375,27 @@ fn apply_context(command: &mut Commands) -> Result<()> {
         | Commands::User { .. } => Ctx::Repo,
         _ => Ctx::None,
     };
+
+    // A subject is only meaningful for repo-level commands; a store for repo- or
+    // store-level ones. If a selector was supplied where it has no effect, say
+    // so and carry on rather than failing.
+    let needs_store = matches!(ctx, Ctx::Store | Ctx::Repo);
+    let needs_subject = matches!(ctx, Ctx::Repo);
+    if subject.is_some() && !needs_subject {
+        eprintln!("Note: --subject was supplied but this command does not use it; ignoring.");
+    }
+    if store.is_some() && !needs_store {
+        eprintln!("Note: --store was supplied but this command does not use it; ignoring.");
+    }
+
     let target = match ctx {
         Ctx::None => return Ok(()),
-        Ctx::Store => commands::context::resolve_store_root()?,
+        Ctx::Store => commands::context::resolve_store_root(store)?,
         Ctx::Repo => {
             // External path args are made absolute against the cwd before the cd.
             let cwd = std::env::current_dir()?;
             absolutize_external_paths(command, &cwd);
-            commands::context::resolve_repo_root()?
+            commands::context::resolve_repo_root(subject, store)?
         }
     };
     std::env::set_current_dir(target)?;

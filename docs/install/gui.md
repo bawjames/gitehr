@@ -8,11 +8,13 @@ The GUI is built with [Tauri](https://tauri.app/) (Rust backend) and React + Man
 ## Prerequisites
 
 - `cargo` available on your PATH.
-- `npm` (Node.js) available on your PATH for the GUI tooling.
+- `npm` (Node.js) available on your PATH. This is a **build-time and dev-build** dependency: it compiles the frontend and, in development mode (`s/gui-dev` / `npm run tauri dev`), runs the live vite dev server. A packaged release build embeds the compiled frontend into the binary and does **not** need npm at runtime.
 
 ### Linux system dependencies
 
-The Tauri GUI on Linux needs WebKit2GTK and a few other system libraries. The list below is for Debian and Ubuntu; adjust for your distribution.
+The Tauri GUI on Linux renders its UI through the system's **WebKitGTK** webview, so `webkit2gtk-4.1` is a **runtime dependency, not just a build one** - the compiled GUI dynamically links it and will not start without it, on both dev and release builds. Every Linux machine that runs the GUI needs it present (a packaged install should declare it as a dependency so the user's package manager pulls it in).
+
+The list below is for Debian and Ubuntu; adjust for your distribution.
 
 ```sh
 sudo apt install libwebkit2gtk-4.1-dev \
@@ -26,7 +28,8 @@ sudo apt install libwebkit2gtk-4.1-dev \
   librsvg2-dev
 ```
 
-See the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/) for the current package names for your distribution and any additional requirements.
+!!! note "Package names vary by distribution"
+    On Debian/Ubuntu the runtime library and the build headers are split (`libwebkit2gtk-4.1-0` at runtime, `libwebkit2gtk-4.1-dev` to build). On Arch the single `webkit2gtk-4.1` package provides both. See the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/) for the current package names for your distribution.
 
 ## Run from source
 

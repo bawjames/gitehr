@@ -27,7 +27,7 @@ const PREFIX: &str = "gitehr-";
 /// `args[0]` is the subcommand name; the rest are forwarded verbatim. On Unix
 /// the plugin replaces this process (`exec`), so its stdio, signals, and exit
 /// code pass through transparently.
-pub fn run(args: Vec<String>) -> Result<()> {
+pub fn external(args: Vec<String>) -> Result<()> {
     let name = args.first().map(String::as_str).unwrap_or_default();
 
     if !is_valid_name(name) {
@@ -42,7 +42,14 @@ pub fn run(args: Vec<String>) -> Result<()> {
 
 /// `gitehr plugins`: list installed plugins (`gitehr-*` on `$PATH`, excluding
 /// any whose name is a built-in command and therefore unreachable as a plugin).
-pub fn list(builtins: &HashSet<String>) -> Result<()> {
+///
+/// A plugin is *run* as `gitehr <name>`, not `gitehr plugins <name>`. If a name
+/// is passed here, point the user at the right form instead of listing.
+pub fn run(builtins: &HashSet<String>, args: &[String]) -> Result<()> {
+    if let Some(name) = args.first() {
+        anyhow::bail!("Did you mean `gitehr {name}`?");
+    }
+
     let plugins = discover(builtins);
     if plugins.is_empty() {
         println!(
