@@ -234,10 +234,13 @@ fn main() -> Result<()> {
     };
 
     // Resolve the Store/repo working context before dispatch (ADR-0005). The
-    // global --subject / --store selectors steer that resolution.
-    let subject = cli.subject.clone();
-    let store = cli.store.clone();
-    apply_context(&mut cli.command, subject.as_deref(), store.as_deref())?;
+    // global --subject / --store selectors steer that resolution. `command` and
+    // `subject`/`store` are disjoint fields, so no clone is needed.
+    apply_context(
+        &mut cli.command,
+        cli.subject.as_deref(),
+        cli.store.as_deref(),
+    )?;
 
     match cli.command {
         Commands::Allergies { command } => commands::allergies::run(command)?,
@@ -348,7 +351,11 @@ fn absolutize_external_paths(command: &mut Commands, base: &Path) {
 /// auto-target); store commands resolve the Store root. Global commands - and
 /// `store init`, which creates a Store - return without ever reading the cwd,
 /// which may be invalid (e.g. a deleted directory inherited from a parent).
-fn apply_context(command: &mut Commands, subject: Option<&str>, store: Option<&Path>) -> Result<()> {
+fn apply_context(
+    command: &mut Commands,
+    subject: Option<&str>,
+    store: Option<&Path>,
+) -> Result<()> {
     enum Ctx {
         None,
         Store,

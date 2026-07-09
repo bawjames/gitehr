@@ -52,10 +52,11 @@ pub fn resolve_store_root(store_override: Option<&Path>) -> Result<PathBuf> {
 /// letting you target one subject in a multi-subject Store from anywhere.
 pub fn resolve_repo_root(subject: Option<&str>, store_override: Option<&Path>) -> Result<PathBuf> {
     // Without explicit selectors, honour the surrounding directory first.
-    if subject.is_none() && store_override.is_none() {
-        if let Some(repo) = find_up(REPO_MARKER)? {
-            return Ok(repo);
-        }
+    if subject.is_none()
+        && store_override.is_none()
+        && let Some(repo) = find_up(REPO_MARKER)?
+    {
+        return Ok(repo);
     }
 
     // Otherwise (or when not inside a repo) we need a Store to select from.
@@ -134,7 +135,8 @@ impl Subject {
     /// A `--subject` selector matches either the friendly name or the MPI id,
     /// mirroring how `gitehr store remove` accepts either.
     fn matches(&self, selector: &str) -> bool {
-        self.repo_path == selector || self.patient_id == selector
+        // An empty selector must not match an id-less subject (patient_id == "").
+        !selector.is_empty() && (self.repo_path == selector || self.patient_id == selector)
     }
 }
 
